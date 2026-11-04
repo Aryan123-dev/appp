@@ -1,0 +1,95 @@
+
+name: CATV MANAGER - Corrected Source APK Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: platform-tools
+
+      - name: Extract Corrected Source ZIP
+        run: |
+          ZIP_FILE="CATV_MANAGER_KOTLIN_COMPILER_FIX.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Corrected source ZIP not found: $ZIP_FILE"
+            exit 1
+          fi
+
+          mkdir -p source
+          unzip -q "$ZIP_FILE" -d source
+
+      - name: Find Android Project
+        id: project
+        run: |
+          PROJECT_DIR=$(find source -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Android Gradle project not found"
+            exit 1
+          fi
+
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Kotlin Compiler Fix
+        run: |
+          FILE=$(find source -name ExcelImportHelper.kt | head -n 1)
+
+          if [ -z "$FILE" ]; then
+            echo "ExcelImportHelper.kt not found"
+            exit 1
+          fi
+
+          if grep -q 'getOrElse' "$FILE"; then
+            echo "Old getOrElse code found. Check corrected source ZIP."
+            exit 1
+          fi
+
+          grep -q 'getOrNull' "$FILE" || {
+            echo "Expected getOrNull fix not found"
+            exit 1
+          }
+
+          echo "Corrected Kotlin source verified."
+
+      - name: Build Debug APK
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew --no-daemon clean assembleDebug
+          else
+            gradle --no-daemon clean assembleDebug
+          fi
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CATV-MANAGER-CORRECTED-DEBUG-APK
+          path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
